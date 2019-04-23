@@ -1,0 +1,100 @@
+kind: StatefulSet
+apiVersion: apps/v1beta2
+metadata:
+  name: kafka-broker
+  namespace: logger
+  labels:
+    app: kafka-broker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka-broker
+  template:
+    metadata:
+      labels:
+        app: kafka-broker
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: "app"
+                    operator: In
+                    values:
+                    - kafka
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: kafka-broker
+        image: wurstmeister/kafka:2.12-2.2.0
+        env:
+          - name: HOSTNAME_COMMAND
+            value: "echo ${HOSTNAME}.kafka-broker.logger.svc"
+          - name: KAFKA_ZOOKEEPER_CONNECT
+            value: "zk-cs.logger.svc:2181"
+          - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+            value: "false"
+          - name: KAFKA_HEAP_OPTS
+            value: "-Xmx2G -Xms1G"
+          - name: KAFKA_LOG_DIRS
+            value: "/opt/kafka/data"
+          - name: BROKER_ID_COMMAND
+            value: "hostname | awk -F'-' '{print $3}'"
+        ports:
+        - name: kafka
+          containerPort: 9092
+          protocol: TCP
+        resources: {}
+        volumeMounts:
+        - name: datadir
+          mountPath: "/opt/kafka/data"      
+        terminationMessagePath: "/dev/termination-log"
+        terminationMessagePolicy: File
+        imagePullPolicy: IfNotPresent
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      schedulerName: default-scheduler
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+      creationTimestamp: 
+      annotations:
+        volume.beta.kubernetes.io/storage-class: cephfs
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      volumeMode: Filesystem
+  serviceName: kafka-broker
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: kafka-broker
+  namespace: logger
+  labels:
+    app: kafka-broker
+spec:
+  ports:
+  - name: broker
+    protocol: TCP
+    port: 9092
+    targetPort: 9092
+  selector:
+    app: kafka-broker
+  type: ClusterIP
+---
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-pdb
+spec:
+  selector:
+    matchLabels:
+      app: kafka-broker
+  maxUnavailable: 1
